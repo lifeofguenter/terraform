@@ -46,10 +46,10 @@ func (m *Meta) backendMigrateState(opts *backendMigrateOpts) error {
 	log.Printf("[TRACE] backendMigrateState: need to migrate from %q to %q backend config", opts.OneType, opts.TwoType)
 	// We need to check what the named state status is. If we're converting
 	// from multi-state to single-state for example, we need to handle that.
-	var oneSingle, twoSingle bool
-	oneStates, err := opts.One.Workspaces()
+	var sourceSingleState, destinationSingleState bool
+	sourceState, err := opts.One.Workspaces()
 	if err == backend.ErrWorkspacesNotSupported {
-		oneSingle = true
+		sourceSingleState = true
 		err = nil
 	}
 	if err != nil {
@@ -57,9 +57,9 @@ func (m *Meta) backendMigrateState(opts *backendMigrateOpts) error {
 			errMigrateLoadStates), opts.OneType, err)
 	}
 
-	twoWorkspaces, err := opts.Two.Workspaces()
+	destinationStates, err := opts.Two.Workspaces()
 	if err == backend.ErrWorkspacesNotSupported {
-		twoSingle = true
+		destinationSingleState = true
 		err = nil
 	}
 	if err != nil {
@@ -77,11 +77,11 @@ func (m *Meta) backendMigrateState(opts *backendMigrateOpts) error {
 	// as we are migrating away and will not break a remote workspace.
 	m.ignoreRemoteBackendVersionConflict(opts.One)
 
-	for _, twoWorkspace := range twoWorkspaces {
+	for _, destinationState := range destinationStates {
 		// Check the remote Terraform version for the state destination backend. If
 		// it's a Terraform Cloud remote backend, we want to ensure that we don't
 		// break the workspace by uploading an incompatible state file.
-		diags := m.remoteBackendVersionCheck(opts.Two, twoWorkspace)
+		diags := m.remoteBackendVersionCheck(opts.Two, destinationState)
 		if diags.HasErrors() {
 			return diags.Err()
 		}
@@ -92,20 +92,20 @@ func (m *Meta) backendMigrateState(opts *backendMigrateOpts) error {
 	switch {
 	// Single-state to single-state. This is the easiest case: we just
 	// copy the default state directly.
-	case oneSingle && twoSingle:
+	case sourceSingleState && destinationSingleState:
 		return m.backendMigrateState_s_s(opts)
 
 	// Single-state to multi-state. This is easy since we just copy
 	// the default state and ignore the rest in the destination.
-	case oneSingle && !twoSingle:
+	case sourceSingleState && !destinationSingleState:
 		return m.backendMigrateState_s_s(opts)
 
 	// Multi-state to single-state. If the source has more than the default
 	// state this is complicated since we have to ask the user what to do.
-	case !oneSingle && twoSingle:
+	case !sourceSingleState && destinationSingleState:
 		// If the source only has one state and it is the default,
 		// treat it as if it doesn't support multi-state.
-		if len(oneStates) == 1 && oneStates[0] == backend.DefaultStateName {
+		if len(sourceState) == 1 && sourceState[0] == backend.DefaultStateName {
 			return m.backendMigrateState_s_s(opts)
 		}
 
@@ -113,10 +113,10 @@ func (m *Meta) backendMigrateState(opts *backendMigrateOpts) error {
 
 	// Multi-state to multi-state. We merge the states together (migrating
 	// each from the source to the destination one by one).
-	case !oneSingle && !twoSingle:
+	case !sourceSingleState && !destinationSingleState:
 		// If the source only has one state and it is the default,
 		// treat it as if it doesn't support multi-state.
-		if len(oneStates) == 1 && oneStates[0] == backend.DefaultStateName {
+		if len(sourceState) == 1 && sourceState[0] == backend.DefaultStateName {
 			return m.backendMigrateState_s_s(opts)
 		}
 
@@ -169,17 +169,17 @@ func (m *Meta) backendMigrateState_S_S(opts *backendMigrateOpts) error {
 	}
 
 	// Read all the states
-	oneStates, err := opts.One.Workspaces()
+	sourceState, err := opts.One.Workspaces()
 	if err != nil {
 		return fmt.Errorf(strings.TrimSpace(
 			errMigrateLoadStates), opts.OneType, err)
 	}
 
 	// Sort the states so they're always copied alphabetically
-	sort.Strings(oneStates)
+	sort.Strings(sourceState)
 
 	// Go through each and migrate
-	for _, name := range oneStates {
+	for _, name := range sourceState {
 		// Copy the same names
 		opts.oneEnv = name
 		opts.twoEnv = name
